@@ -1,0 +1,5 @@
+- name: Apply CIS/STIG hardening to EC2
+  hosts: all
+  become: yes
+  roles:
+    - cis-hardening
