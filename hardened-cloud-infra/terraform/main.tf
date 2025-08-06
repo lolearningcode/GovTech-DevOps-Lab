@@ -18,6 +18,17 @@ resource "aws_subnet" "public" {
   }
 }
 
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project}infra-public-subnet-b"
+  }
+}
+
 resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.2.0/24"
@@ -54,6 +65,11 @@ resource "aws_route_table_association" "public_association" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_association_b" {
+  subnet_id      = aws_subnet.public_b.id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_security_group" "alb_sg" {
   name        = "${var.project}infra-alb-sg"
   description = "Allow HTTP and HTTPS traffic to the ALB"
@@ -66,7 +82,7 @@ resource "aws_security_group" "alb_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  egress = {
+  egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -83,13 +99,13 @@ resource "aws_security_group" "ec2_sg" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [aws_security_group.alb_sg.id]
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
 
   }
-  egress = {
+  egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -102,17 +118,17 @@ resource "aws_security_group" "ec2_sg" {
 }
 
 resource "aws_lb" "app" {
-    name               = "${var.project}infra-alb"
-    internal           = false
-    load_balancer_type = "application"
-    security_groups    = [aws_security_group.alb_sg.id]
-    subnets            = [aws_subnet.public.id]
-    
-    enable_deletion_protection = false
-    
-    tags = {
-        Name = "${var.project}infra-alb"
-    }
+  name               = "${var.project}infra-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = [aws_subnet.public.id, aws_subnet.public_b.id]
+
+  enable_deletion_protection = false
+
+  tags = {
+    Name = "${var.project}infra-alb"
+  }
 }
 
 resource "aws_lb_target_group" "app" {
@@ -127,7 +143,7 @@ resource "aws_lb_target_group" "app" {
     timeout             = 5
     healthy_threshold   = 5
     unhealthy_threshold = 2
-    matcher = "200"
+    matcher             = "200"
   }
 
   tags = {
@@ -151,19 +167,12 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_instance" "web" {
-  ami                    = "ami-04b70fa74e45c3917" # Amazon Linux 2023 (update if needed)
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.private_a.id
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-
-  user_data = <<-EOF
-              #!/bin/bash
-              echo "Hello from GovTech Infra" > /var/www/html/index.html
-              yum install -y httpd
-              systemctl enable httpd
-              systemctl start httpd
-              EOF
+  ami                         = "ami-04b70fa74e45c3917"
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public.id
+  associate_public_ip_address = true
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
   tags = {
     Name = "${var.project}-ec2"
@@ -182,9 +191,9 @@ resource "aws_lb_target_group_attachment" "web" {
 }
 
 resource "aws_kms_key" "cloudtrail" {
-  description = "KMS key for CloudTrail encryption"
+  description             = "KMS key for CloudTrail encryption"
   deletion_window_in_days = 10
-  enable_key_rotation = true
+  enable_key_rotation     = true
 
   tags = {
     Name = "${var.project}infra-cloudtrail-kms-key"
@@ -214,10 +223,86 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
     id     = "cleanup-old-versions"
     status = "Enabled"
 
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
   }
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_kms_key_policy" "cloudtrail" {
+  key_id = aws_kms_key.cloudtrail.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Id      = "cloudtrail-kms-policy",
+    Statement : [
+      {
+        Sid : "Allow CloudTrail to use the key",
+        Effect : "Allow",
+        Principal : {
+          Service : "cloudtrail.amazonaws.com"
+        },
+        Action : [
+          "kms:GenerateDataKey*",
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:ReEncrypt*"
+        ],
+        Resource : "*",
+        Condition : {
+          StringEquals : {
+            "kms:EncryptionContext:aws:cloudtrail:arn" : "arn:aws:cloudtrail:${var.region}:${data.aws_caller_identity.current.account_id}:trail/${var.project}-trail"
+          }
+        }
+      },
+      {
+        Sid : "Allow account use of the key",
+        Effect : "Allow",
+        Principal : {
+          AWS : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        },
+        Action : "kms:*",
+        Resource : "*"
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_policy" "cloudtrail_policy" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid : "AWSCloudTrailAclCheck",
+        Effect : "Allow",
+        Principal : {
+          Service : "cloudtrail.amazonaws.com"
+        },
+        Action : "s3:GetBucketAcl",
+        Resource : aws_s3_bucket.cloudtrail.arn
+      },
+      {
+        Sid : "AWSCloudTrailWrite",
+        Effect : "Allow",
+        Principal : {
+          Service : "cloudtrail.amazonaws.com"
+        },
+        Action : "s3:PutObject",
+        Resource : "${aws_s3_bucket.cloudtrail.arn}/logs/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
+        Condition : {
+          StringEquals : {
+            "s3:x-amz-acl" : "bucket-owner-full-control"
+          }
+        }
+      }
+    ]
+  })
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
