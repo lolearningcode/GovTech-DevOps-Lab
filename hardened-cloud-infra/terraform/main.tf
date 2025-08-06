@@ -180,3 +180,81 @@ resource "aws_lb_target_group_attachment" "web" {
   target_id        = aws_instance.web.id
   port             = 80
 }
+
+resource "aws_kms_key" "cloudtrail" {
+  description = "KMS key for CloudTrail encryption"
+  deletion_window_in_days = 10
+  enable_key_rotation = true
+
+  tags = {
+    Name = "${var.project}infra-cloudtrail-kms-key"
+  }
+}
+
+resource "aws_s3_bucket" "cloudtrail" {
+  bucket = "${var.project}-cloudtrail-logs"
+
+  tags = {
+    Name = "${var.project}-cloudtrail-logs"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  rule {
+    id     = "cleanup-old-versions"
+    status = "Enabled"
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.cloudtrail.arn
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
+
+resource "aws_cloudtrail" "main" {
+  name                          = "${var.project}-trail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail.bucket
+  s3_key_prefix                 = "logs"
+  include_global_service_events = true
+  is_multi_region_trail         = true
+  enable_log_file_validation    = true
+  kms_key_id                    = aws_kms_key.cloudtrail.arn
+
+  event_selector {
+    read_write_type           = "All"
+    include_management_events = true
+  }
+
+  tags = {
+    Name = "${var.project}-cloudtrail"
+  }
+}
