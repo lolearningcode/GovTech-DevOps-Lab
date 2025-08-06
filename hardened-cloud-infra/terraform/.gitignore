@@ -1,0 +1,43 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+terraform.tfvars
+override.tf
+override.tf.json
+*.tfplan
+.plan
+
+# Ansible
+*.retry
+*.log
+*.cache
+
+# SSH / Auth
+*.pem
+*.key
+*.pub
+.secrets/
+.aws/
+
+# macOS
+.DS_Store
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+
+# Python virtualenvs (if using)
+venv/
+__pycache__/
+
+# CI/CD
+.env
+.envrc
+*.bak
+
+# Diagrams
+infra-diagram.png*.tfstate
