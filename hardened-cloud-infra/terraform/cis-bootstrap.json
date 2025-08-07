@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Run CIS Ansible playbook using presigned S3 URL",
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "runCIS",
+      "inputs": {
+        "runCommand": [
+          "sudo apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y python3-venv unzip curl tar git python3-pip",
+          "python3 -m venv /tmp/cisenv",
+          ". /tmp/cisenv/bin/activate && pip install --upgrade pip && pip install ansible",
+          "curl -o /tmp/cis-playbook.zip \"https://hardened-cloud-infra-cloudtrail-logs.s3.us-east-1.amazonaws.com/cis-playbook.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT5RLFUCLDRU5X65Q%2F20250807%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20250807T104441Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=e5a57c6bd3f10cad25a0882c256cae1a46e19b7f4bac3ce528878df4b19a4427\"",
+          "cd /tmp && unzip -o cis-playbook.zip",
+          ". /tmp/cisenv/bin/activate && ls -l /tmp/ansible/playbook.yml",
+          ". /tmp/cisenv/bin/activate && ansible-playbook -i localhost, /tmp/ansible/playbook.yml --connection=local -vvv | tee /tmp/ansible-output.log",
+          "cat /tmp/ansible-output.log"
+        ]
+      }
+    }
+  ]
+}

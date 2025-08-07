@@ -31,7 +31,7 @@ resource "aws_subnet" "public_b" {
 
 resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.2.0/24"
+  cidr_block        = "10.0.4.0/24"
   availability_zone = "us-east-1a"
 
   tags = {
@@ -166,22 +166,42 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+resource "aws_network_interface" "web" {
+  subnet_id       = aws_subnet.public.id
+  security_groups = [aws_security_group.ec2_sg.id]
+}
+
+resource "aws_eip" "web" {
+}
+
+resource "aws_eip_association" "web" {
+  instance_id   = aws_instance.web.id
+  allocation_id = aws_eip.web.id
+}
+
 resource "aws_instance" "web" {
   ami                         = "ami-04b70fa74e45c3917"
   instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.public.id
-  associate_public_ip_address = true
-  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  network_interface {
+    device_index         = 0
+    network_interface_id = aws_network_interface.web.id
+  }
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
   tags = {
     Name = "${var.project}-ec2"
   }
+
+  depends_on = [aws_network_interface.web]
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${var.project}-ec2-profile"
   role = aws_iam_role.ec2_role.name
+
+  tags = {
+    Name = "${var.project}-ec2-profile"
+  }
 }
 
 resource "aws_lb_target_group_attachment" "web" {
@@ -288,13 +308,28 @@ resource "aws_s3_bucket_policy" "cloudtrail_policy" {
         Resource : aws_s3_bucket.cloudtrail.arn
       },
       {
+        Sid : "AllowEC2SSMRoleAccessToObjects",
+        Effect : "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::269599744150:role/hardened-cloud-infra-ec2-role"
+        },
+        Action : [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ],
+        Resource : [
+          "${aws_s3_bucket.cloudtrail.arn}",
+          "${aws_s3_bucket.cloudtrail.arn}/*"
+        ]
+      },
+      {
         Sid : "AWSCloudTrailWrite",
         Effect : "Allow",
         Principal : {
           Service : "cloudtrail.amazonaws.com"
         },
         Action : "s3:PutObject",
-        Resource : "${aws_s3_bucket.cloudtrail.arn}/logs/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
+        Resource : "${aws_s3_bucket.cloudtrail.arn}/logs/AWSLogs/269599744150/*",
         Condition : {
           StringEquals : {
             "s3:x-amz-acl" : "bucket-owner-full-control"
@@ -341,5 +376,47 @@ resource "aws_cloudtrail" "main" {
 
   tags = {
     Name = "${var.project}-cloudtrail"
+  }
+}
+
+resource "aws_ssm_document" "cis_hardening" {
+  name          = "CIS-Hardening-Playbook"
+  document_type = "Command"
+  content       = file("cis-bootstrap.json")
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_instance" "cis_target" {
+  ami                         = "ami-0c7217cdde317cfec" # Ubuntu 24.04 (change as needed)
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  associate_public_ip_address = true
+
+  tags = {
+    Name         = "CIS-Hardened-Node"
+    Environment  = "Hardened"
+    CIS_Hardened = "Pending"
+  }
+}
+
+resource "null_resource" "run_cis_hardening" {
+  depends_on = [
+    aws_instance.cis_target,
+    aws_ssm_document.cis_hardening
+  ]
+
+  provisioner "local-exec" {
+    command = <<EOT
+      aws ssm send-command \
+        --document-name "${aws_ssm_document.cis_hardening.name}" \
+        --instance-ids "${aws_instance.cis_target.id}" \
+        --comment "CIS bootstrap from Terraform" \
+        --region us-east-1
+    EOT
   }
 }

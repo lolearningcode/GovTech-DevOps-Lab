@@ -12,3 +12,8 @@ output "private_subnet_id" {
   description = "The ID of the private subnet created."
   value       = aws_subnet.private.id
 }
+
+output "cis_instance_id" {
+  value = aws_instance.cis_target.id
+  description = "The instance ID of the CIS-hardened EC2 instance"
+}

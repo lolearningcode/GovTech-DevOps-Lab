@@ -19,12 +19,6 @@
     backup: yes
 
 - name: Install auditd
-  package:
-    name: audit
-    state: present
-
-- name: Enable and start auditd service
-  service:
+  apt:
     name: auditd
-    state: started
-    enabled: true
+    state: present

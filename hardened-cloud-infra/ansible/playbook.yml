@@ -1,5 +1,15 @@
 - name: Apply CIS/STIG hardening to EC2
-  hosts: all
-  become: yes
+  hosts: localhost
+  connection: local
+  gather_facts: yes
   roles:
-    - cis-hardening
+    - ansible-lockdown.UBUNTU22-CIS
+  vars:
+    ubtu22cis_skip_for_travis: true
+    ubtu22cis_section1: true
+    ubtu22cis_section2: true
+    ubtu22cis_section3: true
+    ubtu22cis_section4: true
+    ubtu22cis_section5: true
+    ubtu22cis_section6: true
+    ubtu22cis_section7: true

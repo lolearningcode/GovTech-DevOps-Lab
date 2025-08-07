@@ -41,3 +41,7 @@ __pycache__/
 
 # Diagrams
 infra-diagram.png*.tfstate
+
+# Sensitive Playbooks & Artifacts
+cis-playbook.zip
+cis-playbook*.zip
